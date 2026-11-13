@@ -103,7 +103,7 @@ def insert_tweet(connection,tweet):
 
     # insert tweet within a transaction;
     # this ensures that a tweet does not get "partially" loaded
-    with connection.begin() as trans:
+    with connection.begin_nested() as trans:
 
         ########################################
         # insert into the users table
@@ -115,8 +115,60 @@ def insert_tweet(connection,tweet):
 
         # create/update the user
         sql = sqlalchemy.sql.text('''
-            ''')
+            INSERT INTO users (
+                id_users,
+                created_at,
+                updated_at,
+                id_urls,
+                friends_count,
+                listed_count,
+                favourites_count,
+                statuses_count,
+                protected,
+                verified,
+                screen_name,
+                name,
+                location,
+                description,
+                withheld_in_countries
+            )
+            VALUES (
+                :id_users,
+                :created_at,
+                :updated_at,
+                :id_urls,
+                :friends_count,
+                :listed_count,
+                :favourites_count,
+                :statuses_count,
+                :protected,
+                :verified,
+                :screen_name,
+                :name,
+                :location,
+                :description,
+                :withheld_in_countries
+            )
+            ON CONFLICT DO NOTHING
+        ''')
 
+        res = connection.execute(sql, {
+            'id_users': tweet['user']['id'],
+            'created_at': tweet['user'].get('created_at'),
+            'updated_at': tweet.get('created_at'),
+            'id_urls': user_id_urls,
+            'friends_count': tweet['user'].get('friends_count'),
+            'listed_count': tweet['user'].get('listed_count'),
+            'favourites_count': tweet['user'].get('favourites_count'),
+            'statuses_count': tweet['user'].get('statuses_count'),
+            'protected': tweet['user'].get('protected'),
+            'verified': tweet['user'].get('verified'),
+            'screen_name': remove_nulls(tweet['user'].get('screen_name')),
+            'name': remove_nulls(tweet['user'].get('name')),
+            'location': remove_nulls(tweet['user'].get('location')),
+            'description': remove_nulls(tweet['user'].get('description')),
+            'withheld_in_countries': tweet['user'].get('withheld_in_countries'),
+        })
         ########################################
         # insert into the tweets table
         ########################################
@@ -173,11 +225,89 @@ def insert_tweet(connection,tweet):
         # If the id is not in the users table, then you'll need to add it in an "unhydrated" form.
         if tweet.get('in_reply_to_user_id',None) is not None:
             sql=sqlalchemy.sql.text('''
-                ''')
+                INSERT INTO users (
+                    id_users,
+                    screen_name
+                )
+                VALUES (
+                    :id_users,
+                    :screen_name
+                )
+                ON CONFLICT DO NOTHING
+            ''')
+            connection.execute(sql, {
+                'id_users': tweet['in_reply_to_user_id'],
+                'screen_name': remove_nulls(tweet.get('in_reply_to_screen_name')),
+            })
 
         # insert the tweet
         sql=sqlalchemy.sql.text(f'''
-            ''')
+            INSERT INTO tweets (
+                id_tweets,
+                id_users,
+                created_at,
+                in_reply_to_status_id,
+                in_reply_to_user_id,
+                quoted_status_id,
+                retweet_count,
+                favorite_count,
+                quote_count,
+                withheld_copyright,
+                withheld_in_countries,
+                source,
+                text,
+                country_code,
+                state_code,
+                lang,
+                place_name,
+                geo
+            )
+            VALUES (
+                :id_tweets,
+                :id_users,
+                :created_at,
+                :in_reply_to_status_id,
+                :in_reply_to_user_id,
+                :quoted_status_id,
+                :retweet_count,
+                :favorite_count,
+                :quote_count,
+                :withheld_copyright,
+                :withheld_in_countries,
+                :source,
+                :text,
+                :country_code,
+                :state_code,
+                :lang,
+                :place_name,
+                {'ST_GeomFromText(:geo, 4326)' if geo_str is not None else 'NULL'}
+            )
+            ON CONFLICT DO NOTHING
+        ''')
+
+        params = {
+            'id_tweets': tweet['id'],
+            'id_users': tweet['user']['id'],
+            'created_at': tweet.get('created_at'),
+            'in_reply_to_status_id': tweet.get('in_reply_to_status_id'),
+            'in_reply_to_user_id': tweet.get('in_reply_to_user_id'),
+            'quoted_status_id': tweet.get('quoted_status_id'),
+            'retweet_count': tweet.get('retweet_count'),
+            'favorite_count': tweet.get('favorite_count'),
+            'quote_count': tweet.get('quote_count'),
+            'withheld_copyright': tweet.get('withheld_copyright'),
+            'withheld_in_countries': tweet.get('withheld_in_countries'),
+            'source': remove_nulls(tweet.get('source')),
+            'text': remove_nulls(text),
+            'country_code': remove_nulls(country_code),
+            'state_code': remove_nulls(state_code),
+            'lang': remove_nulls(tweet.get('lang')),
+            'place_name': remove_nulls(place_name),
+        }
+        if geo_str is not None:
+            params['geo'] = f'{geo_str}({geo_coords})'
+
+        connection.execute(sql, params)
 
         ########################################
         # insert into the tweet_urls table
@@ -191,8 +321,21 @@ def insert_tweet(connection,tweet):
         for url in urls:
             id_urls = get_id_urls(url['expanded_url'], connection)
 
-            sql=sqlalchemy.sql.text('''
-                ''')
+            sql = sqlalchemy.sql.text('''
+                INSERT INTO tweet_urls (
+                    id_tweets,
+                    id_urls
+                )
+                VALUES (
+                    :id_tweets,
+                    :id_urls
+                )
+                ON CONFLICT DO NOTHING
+            ''')
+            connection.execute(sql, {
+                'id_tweets': tweet['id'],
+                'id_urls': id_urls,
+            })
 
         ########################################
         # insert into the tweet_mentions table
@@ -211,12 +354,41 @@ def insert_tweet(connection,tweet):
             # therefore, we must store the user info "unhydrated"
             # HINT:
             # use the ON CONFLICT DO NOTHING syntax
-            sql=sqlalchemy.sql.text('''
-                ''')
+            sql = sqlalchemy.sql.text('''
+                INSERT INTO users (
+                    id_users,
+                    name,
+                    screen_name
+                )
+                VALUES (
+                    :id_users,
+                    :name,
+                    :screen_name
+                )
+                ON CONFLICT DO NOTHING
+            ''')
+            connection.execute(sql, {
+                'id_users': mention['id'],
+                'name': remove_nulls(mention.get('name')),
+                'screen_name': remove_nulls(mention.get('screen_name')),
+            })
 
             # insert into tweet_mentions
-            sql=sqlalchemy.sql.text('''
-                ''')
+            sql = sqlalchemy.sql.text('''
+                INSERT INTO tweet_mentions (
+                    id_tweets,
+                    id_users
+                )
+                VALUES (
+                    :id_tweets,
+                    :id_users
+                )
+                ON CONFLICT DO NOTHING
+            ''')
+            connection.execute(sql, {
+                'id_tweets': tweet['id'],
+                'id_users': mention['id'],
+            })
 
         ########################################
         # insert into the tweet_tags table
@@ -232,9 +404,21 @@ def insert_tweet(connection,tweet):
         tags = [ '#'+hashtag['text'] for hashtag in hashtags ] + [ '$'+cashtag['text'] for cashtag in cashtags ]
 
         for tag in tags:
-            sql=sqlalchemy.sql.text('''
-                ''')
-
+            sql = sqlalchemy.sql.text('''
+                INSERT INTO tweet_tags (
+                    id_tweets,
+                    tag
+                )
+                VALUES (
+                    :id_tweets,
+                    :tag
+                )
+                ON CONFLICT DO NOTHING
+            ''')
+            connection.execute(sql, {
+                'id_tweets': tweet['id'],
+                'tag': remove_nulls(tag),
+            })
         ########################################
         # insert into the tweet_media table
         ########################################
@@ -249,8 +433,26 @@ def insert_tweet(connection,tweet):
 
         for medium in media:
             id_urls = get_id_urls(medium['media_url'], connection)
-            sql=sqlalchemy.sql.text('''
-                ''')
+            sql = sqlalchemy.sql.text('''
+                INSERT INTO tweet_media (
+                    id_tweets,
+                    id_urls,
+                    type
+                )
+                VALUES (
+                    :id_tweets,
+                    :id_urls,
+                    :type
+                )
+                ON CONFLICT DO NOTHING
+            ''')
+            connection.execute(sql, {
+                'id_tweets': tweet['id'],
+                'id_urls': id_urls,
+                'type': remove_nulls(medium.get('type')),
+            })
+    
+    connection.commit()
 
 ################################################################################
 # main functions
